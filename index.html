@@ -31,7 +31,7 @@
             align-items: center;
             margin-bottom: 10px;
         }
-        #score, #timer, #namePrompt, #highScores {
+        #score, #timer, #namePrompt, #playerScores {
             font-size: 24px;
             margin: 5px;
             text-shadow: 0 0 5px #00ffcc;
@@ -44,7 +44,7 @@
             border: 1px solid #00ffcc;
             margin-left: 10px;
         }
-        #highScores {
+        #playerScores {
             display: none;
             text-align: center;
             width: 100%;
@@ -59,36 +59,17 @@
         </div>
         <div id="namePrompt">Enter your name: <input type="text" id="playerName" autofocus></div>
         <canvas id="gameCanvas" width="600" height="400"></canvas>
-        <div id="highScores"></div>
+        <div id="playerScores"></div>
     </div>
 
-    <script type="module">
-        // Import Firebase SDKs
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-app.js";
-        import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore.js";
-
-        // Placeholder for Firebase configuration (will be injected via build)
-        let firebaseConfig = {
-            apiKey: "",
-            authDomain: "",
-            projectId: "",
-            storageBucket: "",
-            messagingSenderId: "",
-            appId: "",
-            measurementId: ""
-        };
-
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-
+    <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const scoreDisplay = document.getElementById('score');
         const timerDisplay = document.getElementById('timer');
         const namePrompt = document.getElementById('namePrompt');
         const playerNameInput = document.getElementById('playerName');
-        const highScoresDiv = document.getElementById('highScores');
+        const playerScoresDiv = document.getElementById('playerScores');
 
         // Game variables
         const player = { x: 300, y: 200, radius: 15, baseSpeed: 5, boostSpeed: 10, speed: 5, angle: 0 };
@@ -101,6 +82,7 @@
         let gameOverAnimation = false;
         let explosionParticles = [];
         let timeLeft = 30; // 30 seconds timer
+        let playerSessionScores = []; // Store last 5 scores for the current session
 
         // Generate starry background
         for (let i = 0; i < 100; i++) {
@@ -116,6 +98,7 @@
         playerNameInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && playerNameInput.value.trim()) {
                 playerName = playerNameInput.value.trim();
+                playerSessionScores = []; // Reset scores for new player
                 namePrompt.style.display = 'none';
                 startGame();
             }
@@ -274,66 +257,47 @@
             });
         }
 
-        // Game over with high scores
-        async function gameOver(message = 'Mission Complete!') {
+        // Game over with player’s last 5 session scores
+        function gameOver(message = 'Mission Complete!') {
             gameRunning = false;
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for explosion animation
-            await saveScore(playerName, score);
-            const topScores = await fetchTopScores();
-            displayHighScores(topScores, score, playerName);
-            alert(`${message} ${playerName}, Energy Collected: ${score}`);
+            setTimeout(() => { // Wait for explosion animation (1 second)
+                // Add current score to session scores, keep only last 5
+                playerSessionScores.unshift(score);
+                playerSessionScores = playerSessionScores.slice(0, 5);
 
-            // Reset and prompt for new name
-            score = 0;
-            orbs = [];
-            player.x = 300;
-            player.y = 200;
-            scoreDisplay.textContent = `Energy: ${score}`;
-            highScoresDiv.style.display = 'none';
-            gameOverAnimation = false;
-            explosionParticles = [];
-            draw();
-            playerName = ''; // Clear player name
-            playerNameInput.value = ''; // Clear input field
-            namePrompt.style.display = 'block'; // Show name prompt again
+                // Display player’s last 5 session scores
+                displayPlayerScores();
+
+                // Show alert with the message
+                alert(`${message} ${playerName}, Energy Collected: ${score}`);
+
+                // Reset game state and prompt for new name
+                score = 0;
+                orbs = [];
+                player.x = 300;
+                player.y = 200;
+                scoreDisplay.textContent = `Energy: ${score}`;
+                playerScoresDiv.style.display = 'none';
+                gameOverAnimation = false;
+                explosionParticles = [];
+                draw();
+                playerName = ''; // Clear player name
+                playerNameInput.value = ''; // Clear input field
+                namePrompt.style.display = 'block'; // Show name prompt again
+            }, 1000);
         }
 
-        // Save score to Firestore
-        async function saveScore(name, score) {
-            try {
-                await addDoc(collection(db, 'scores'), {
-                    name,
-                    score,
-                    timestamp: new Date().toISOString() // Use ISO string for timestamp
-                });
-            } catch (error) {
-                console.error('Error saving score:', error);
-            }
-        }
-
-        // Fetch top 5 scores from Firestore
-        async function fetchTopScores() {
-            try {
-                const q = query(collection(db, 'scores'), orderBy('score', 'desc'), limit(5));
-                const snapshot = await getDocs(q);
-                return snapshot.docs.map(doc => doc.data());
-            } catch (error) {
-                console.error('Error fetching scores:', error);
-                return [];
-            }
-        }
-
-        // Display high scores and current player's score
-        function displayHighScores(scores, currentScore, currentPlayer) {
-            let html = '<h3>Top 5 Scores</h3>';
-            if (scores.length === 0) {
-                html += '<p>No scores yet.</p>';
+        // Display the player's last 5 session scores
+        function displayPlayerScores() {
+            let html = '<h3>Your Last 5 Session Scores</h3>';
+            if (playerSessionScores.length === 0) {
+                html += '<p>No scores yet in this session.</p>';
             } else {
-                html += scores.map((entry, i) => `${i + 1}. ${entry.name}: ${entry.score}`).join('<br>');
+                html += playerSessionScores.map((score, i) => `${i + 1}. ${score}`).join('<br>');
             }
-            html += `<br><h4>Your Score: ${currentPlayer}: ${currentScore}</h4>`;
-            highScoresDiv.innerHTML = html;
-            highScoresDiv.style.display = 'block';
+            html += `<br><h4>Your Current Score: ${score}</h4>`;
+            playerScoresDiv.innerHTML = html;
+            playerScoresDiv.style.display = 'block';
         }
 
         // Timer function
