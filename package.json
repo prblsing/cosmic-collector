@@ -1,0 +1,11 @@
+{
+    "name": "cosmic-collector",
+    "version": "1.0.0",
+    "description": "A cosmic-themed collecting game",
+    "scripts": {
+        "build": "node build.js"
+    },
+    "devDependencies": {
+        "fs": "^0.0.1-security"
+    }
+}
