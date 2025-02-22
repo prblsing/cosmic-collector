@@ -1,356 +1,315 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cosmic Collector</title>
-    <style>
-        body {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            background-color: #1a1a2e;
-            font-family: Arial, sans-serif;
-            color: #fff;
-            margin: 0;
-            height: 100vh;
-        }
-        #gameContainer {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            width: 100%;
-            max-width: 1200px;
-            padding: 20px;
-            box-sizing: border-box;
-        }
-        #gameUI {
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-        #score, #timer, #namePrompt, #highScores {
-            font-size: 24px;
-            margin: 5px;
-            text-shadow: 0 0 5px #00ffcc;
-        }
-        #namePrompt input {
-            font-size: 20px;
-            padding: 5px;
-            background: #0f3460;
-            color: #fff;
-            border: 1px solid #00ffcc;
-            margin-left: 10px;
-        }
-        #highScores {
-            display: none;
-            text-align: center;
-            width: 100%;
-        }
-    </style>
-</head>
-<body>
-    <div id="gameContainer">
-        <div id="gameUI">
-            <div id="score">Energy: 0</div>
-            <div id="timer">Time: 30s</div>
-        </div>
-        <div id="namePrompt">Enter your name: <input type="text" id="playerName" autofocus></div>
-        <canvas id="gameCanvas" width="600" height="400"></canvas>
-        <div id="highScores"></div>
-    </div>
+<script type="module">
+    // Import Firebase SDKs
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-app.js";
+    import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore.js";
 
-    <script type="module">
-        // Import Firebase SDKs
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-app.js";
-        import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore.js";
+    // Firebase configuration (hardcoded for local testing; replace with secrets in production)
+    const firebaseConfig = {
+        apiKey: "AIzaSyCMmgjBMQ0O1G5HD-T3gZU0ZTAfMbx9nss",
+        authDomain: "pb-x-skygame.firebaseapp.com",
+        projectId: "pb-x-skygame",
+        storageBucket: "pb-x-skygame.firebasestorage.app",
+        messagingSenderId: "118715698588",
+        appId: "1:118715698588:web:cba5b90994d164c504cc59",
+        measurementId: "G-3RHR5T09G5"
+    };
 
-        // Placeholder for Firebase configuration (will be injected via build)
-        let firebaseConfig = {
-            apiKey: "",
-            authDomain: "",
-            projectId: "",
-            storageBucket: "",
-            messagingSenderId: "",
-            appId: "",
-            measurementId: ""
-        };
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
 
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreDisplay = document.getElementById('score');
+    const timerDisplay = document.getElementById('timer');
+    const namePrompt = document.getElementById('namePrompt');
+    const playerNameInput = document.getElementById('playerName');
+    const highScoresDiv = document.getElementById('highScores');
 
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const scoreDisplay = document.getElementById('score');
-        const timerDisplay = document.getElementById('timer');
-        const namePrompt = document.getElementById('namePrompt');
-        const playerNameInput = document.getElementById('playerName');
-        const highScoresDiv = document.getElementById('highScores');
+    // Game variables
+    const player = { x: 300, y: 200, radius: 15, baseSpeed: 5, boostSpeed: 10, speed: 5, angle: 0 };
+    let orbs = [];
+    let score = 0;
+    let gameRunning = false;
+    let stars = [];
+    let playerName = '';
+    let deathOnWall = true;
+    let gameOverAnimation = false;
+    let explosionParticles = [];
+    let timeLeft = 30; // 30 seconds timer
 
-        // Game variables
-        const player = { x: 300, y: 200, radius: 15, baseSpeed: 5, boostSpeed: 10, speed: 5, angle: 0 };
-        let orbs = [];
-        let score = 0;
-        let gameRunning = false;
-        let stars = [];
-        let playerName = '';
-        let deathOnWall = true;
-        let gameOverAnimation = false;
-        let explosionParticles = [];
-        let timeLeft = 30; // 30 seconds timer
+    // Generate starry background
+    for (let i = 0; i < 100; i++) {
+        stars.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            size: Math.random() * 2 + 1,
+            brightness: Math.random()
+        });
+    }
 
-        // Generate starry background
-        for (let i = 0; i < 100; i++) {
-            stars.push({
+    // Handle name input
+    playerNameInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && playerNameInput.value.trim()) {
+            playerName = playerNameInput.value.trim();
+            namePrompt.style.display = 'none';
+            startGame();
+        }
+    });
+
+    function startGame() {
+        if (!gameRunning) {
+            gameRunning = true;
+            timeLeft = 30; // Reset timer
+            spawnOrbs();
+            gameLoop();
+            updateTimer(); // Start timer
+        }
+    }
+
+    // Player movement with speed boost and wall behavior
+    const keys = {};
+    document.addEventListener('keydown', (e) => { keys[e.key] = true; });
+    document.addEventListener('keyup', (e) => { keys[e.key] = false; });
+
+    function movePlayer() {
+        if (gameOverAnimation) return;
+
+        player.speed = keys['Shift'] ? player.boostSpeed : player.baseSpeed;
+
+        if (keys['ArrowUp'] || keys['w']) player.y -= player.speed;
+        if (keys['ArrowDown'] || keys['s']) player.y += player.speed;
+        if (keys['ArrowLeft'] || keys['a']) player.x -= player.speed;
+        if (keys['ArrowRight'] || keys['d']) player.x += player.speed;
+
+        if (deathOnWall) {
+            if (player.x < player.radius || player.x > canvas.width - player.radius ||
+                player.y < player.radius || player.y > canvas.height - player.radius) {
+                triggerExplosion(player.x, player.y);
+                gameOver('Crashed into the void!');
+                return;
+            }
+        } else {
+            if (player.x < 0) player.x = canvas.width - player.radius;
+            if (player.x > canvas.width) player.x = player.radius;
+            if (player.y < 0) player.y = canvas.height - player.radius;
+            if (player.y > canvas.height) player.y = player.radius;
+        }
+
+        player.angle += 0.05;
+    }
+
+    // Explosion animation for game over
+    function triggerExplosion(x, y) {
+        gameOverAnimation = true;
+        for (let i = 0; i < 20; i++) {
+            explosionParticles.push({
+                x,
+                y,
+                radius: Math.random() * 5 + 2,
+                color: `hsl(${Math.random() * 360}, 100%, 70%)`,
+                vx: (Math.random() - 0.5) * 10,
+                vy: (Math.random() - 0.5) * 10,
+                alpha: 1
+            });
+        }
+    }
+
+    function updateExplosion() {
+        explosionParticles = explosionParticles.filter(p => p.alpha > 0);
+        explosionParticles.forEach(p => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.alpha -= 0.02;
+        });
+    }
+
+    // Spawn energy orbs
+    function spawnOrbs() {
+        if (orbs.length < 5) {
+            orbs.push({
                 x: Math.random() * canvas.width,
                 y: Math.random() * canvas.height,
-                size: Math.random() * 2 + 1,
-                brightness: Math.random()
+                radius: 10 + Math.random() * 5,
+                color: `hsl(${Math.random() * 360}, 100%, 70%)`,
+                pulse: Math.random() * 0.1
             });
         }
+        if (gameRunning) setTimeout(spawnOrbs, 2000);
+    }
 
-        // Handle name input
-        playerNameInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && playerNameInput.value.trim()) {
-                playerName = playerNameInput.value.trim();
-                namePrompt.style.display = 'none';
-                startGame();
+    // Game loop
+    function gameLoop() {
+        console.log('Game loop running:', { gameRunning, explosionParticlesLength: explosionParticles.length });
+        if (!gameRunning && explosionParticles.length === 0) return;
+        movePlayer();
+        checkCollisions();
+        updateExplosion();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    // Collision detection
+    function checkCollisions() {
+        orbs = orbs.filter(orb => {
+            const dx = player.x - orb.x;
+            const dy = player.y - orb.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < player.radius + orb.radius) {
+                score += Math.floor(orb.radius);
+                scoreDisplay.textContent = `Energy: ${score}`;
+                return false;
             }
+            return true;
+        });
+    }
+
+    // Draw everything
+    function draw() {
+        ctx.fillStyle = 'rgba(26, 26, 46, 0.2)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        stars.forEach(star => {
+            ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+            ctx.fill();
         });
 
-        function startGame() {
-            if (!gameRunning) {
-                gameRunning = true;
-                timeLeft = 30; // Reset timer
-                spawnOrbs();
-                gameLoop();
-                updateTimer(); // Start timer
-            }
+        orbs.forEach(orb => {
+            orb.radius += Math.sin(Date.now() * orb.pulse) * 0.5;
+            ctx.fillStyle = orb.color;
+            ctx.beginPath();
+            ctx.arc(orb.x, orb.y, orb.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = orb.color;
+        });
+        ctx.shadowBlur = 0;
+
+        if (!gameOverAnimation) {
+            ctx.save();
+            ctx.translate(player.x, player.y);
+            ctx.rotate(player.angle);
+            ctx.fillStyle = '#00ffcc';
+            ctx.beginPath();
+            ctx.moveTo(20, 0);
+            ctx.lineTo(-10, 10);
+            ctx.lineTo(-10, -10);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
         }
 
-        // Player movement with speed boost and wall behavior
-        const keys = {};
-        document.addEventListener('keydown', (e) => { keys[e.key] = true; });
-        document.addEventListener('keyup', (e) => { keys[e.key] = false; });
+        explosionParticles.forEach(p => {
+            ctx.fillStyle = `rgba(${parseInt(p.color.slice(4, -1).split(',')[0])}, ${
+                parseInt(p.color.slice(4, -1).split(',')[1])}, ${
+                parseInt(p.color.slice(4, -1).split(',')[2])}, ${p.alpha})`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fill();
+        });
+    }
 
-        function movePlayer() {
-            if (gameOverAnimation) return;
-
-            player.speed = keys['Shift'] ? player.boostSpeed : player.baseSpeed;
-
-            if (keys['ArrowUp'] || keys['w']) player.y -= player.speed;
-            if (keys['ArrowDown'] || keys['s']) player.y += player.speed;
-            if (keys['ArrowLeft'] || keys['a']) player.x -= player.speed;
-            if (keys['ArrowRight'] || keys['d']) player.x += player.speed;
-
-            if (deathOnWall) {
-                if (player.x < player.radius || player.x > canvas.width - player.radius ||
-                    player.y < player.radius || player.y > canvas.height - player.radius) {
-                    triggerExplosion(player.x, player.y);
-                    gameOver('Crashed into the void!');
-                    return;
-                }
-            } else {
-                if (player.x < 0) player.x = canvas.width - player.radius;
-                if (player.x > canvas.width) player.x = player.radius;
-                if (player.y < 0) player.y = canvas.height - player.radius;
-                if (player.y > canvas.height) player.y = player.radius;
-            }
-
-            player.angle += 0.05;
+    // Game over with high scores
+    async function gameOver(message = 'Mission Complete!') {
+        gameRunning = false;
+        // Wait for the explosion animation (1 second), but don’t block indefinitely
+        try {
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for explosion
+        } catch (error) {
+            console.error('Error in explosion animation delay:', error);
         }
 
-        // Explosion animation for game over
-        function triggerExplosion(x, y) {
-            gameOverAnimation = true;
-            for (let i = 0; i < 20; i++) {
-                explosionParticles.push({
-                    x,
-                    y,
-                    radius: Math.random() * 5 + 2,
-                    color: `hsl(${Math.random() * 360}, 100%, 70%)`,
-                    vx: (Math.random() - 0.5) * 10,
-                    vy: (Math.random() - 0.5) * 10,
-                    alpha: 1
-                });
-            }
-        }
-
-        function updateExplosion() {
-            explosionParticles = explosionParticles.filter(p => p.alpha > 0);
-            explosionParticles.forEach(p => {
-                p.x += p.vx;
-                p.y += p.vy;
-                p.alpha -= 0.02;
-            });
-        }
-
-        // Spawn energy orbs
-        function spawnOrbs() {
-            if (orbs.length < 5) {
-                orbs.push({
-                    x: Math.random() * canvas.width,
-                    y: Math.random() * canvas.height,
-                    radius: 10 + Math.random() * 5,
-                    color: `hsl(${Math.random() * 360}, 100%, 70%)`,
-                    pulse: Math.random() * 0.1
-                });
-            }
-            if (gameRunning) setTimeout(spawnOrbs, 2000);
-        }
-
-        // Game loop
-        function gameLoop() {
-            if (!gameRunning && explosionParticles.length === 0) return;
-            movePlayer();
-            checkCollisions();
-            updateExplosion();
-            draw();
-            requestAnimationFrame(gameLoop);
-        }
-
-        // Collision detection
-        function checkCollisions() {
-            orbs = orbs.filter(orb => {
-                const dx = player.x - orb.x;
-                const dy = player.y - orb.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                if (distance < player.radius + orb.radius) {
-                    score += Math.floor(orb.radius);
-                    scoreDisplay.textContent = `Energy: ${score}`;
-                    return false;
-                }
-                return true;
-            });
-        }
-
-        // Draw everything
-        function draw() {
-            ctx.fillStyle = 'rgba(26, 26, 46, 0.2)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            stars.forEach(star => {
-                ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
-                ctx.beginPath();
-                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-                ctx.fill();
-            });
-
-            orbs.forEach(orb => {
-                orb.radius += Math.sin(Date.now() * orb.pulse) * 0.5;
-                ctx.fillStyle = orb.color;
-                ctx.beginPath();
-                ctx.arc(orb.x, orb.y, orb.radius, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.shadowBlur = 20;
-                ctx.shadowColor = orb.color;
-            });
-            ctx.shadowBlur = 0;
-
-            if (!gameOverAnimation) {
-                ctx.save();
-                ctx.translate(player.x, player.y);
-                ctx.rotate(player.angle);
-                ctx.fillStyle = '#00ffcc';
-                ctx.beginPath();
-                ctx.moveTo(20, 0);
-                ctx.lineTo(-10, 10);
-                ctx.lineTo(-10, -10);
-                ctx.closePath();
-                ctx.fill();
-                ctx.restore();
-            }
-
-            explosionParticles.forEach(p => {
-                ctx.fillStyle = `rgba(${parseInt(p.color.slice(4, -1).split(',')[0])}, ${
-                    parseInt(p.color.slice(4, -1).split(',')[1])}, ${
-                    parseInt(p.color.slice(4, -1).split(',')[2])}, ${p.alpha})`;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-                ctx.fill();
-            });
-        }
-
-        // Game over with high scores
-        async function gameOver(message = 'Mission Complete!') {
-            gameRunning = false;
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for explosion animation
+        // Save the score to Firestore with error handling
+        try {
             await saveScore(playerName, score);
+            console.log('Score saved successfully:', { name: playerName, score });
+        } catch (error) {
+            console.error('Error saving score to Firestore:', error);
+            alert('Failed to save score. Check console for details.');
+        }
+
+        // Fetch and display high scores with error handling
+        try {
             const topScores = await fetchTopScores();
             displayHighScores(topScores, score, playerName);
-            alert(`${message} ${playerName}, Energy Collected: ${score}`);
-
-            // Reset and prompt for new name
-            score = 0;
-            orbs = [];
-            player.x = 300;
-            player.y = 200;
-            scoreDisplay.textContent = `Energy: ${score}`;
-            highScoresDiv.style.display = 'none';
-            gameOverAnimation = false;
-            explosionParticles = [];
-            draw();
-            playerName = ''; // Clear player name
-            playerNameInput.value = ''; // Clear input field
-            namePrompt.style.display = 'block'; // Show name prompt again
-        }
-
-        // Save score to Firestore
-        async function saveScore(name, score) {
-            try {
-                await addDoc(collection(db, 'scores'), {
-                    name,
-                    score,
-                    timestamp: new Date().toISOString() // Use ISO string for timestamp
-                });
-            } catch (error) {
-                console.error('Error saving score:', error);
-            }
-        }
-
-        // Fetch top 5 scores from Firestore
-        async function fetchTopScores() {
-            try {
-                const q = query(collection(db, 'scores'), orderBy('score', 'desc'), limit(5));
-                const snapshot = await getDocs(q);
-                return snapshot.docs.map(doc => doc.data());
-            } catch (error) {
-                console.error('Error fetching scores:', error);
-                return [];
-            }
-        }
-
-        // Display high scores and current player's score
-        function displayHighScores(scores, currentScore, currentPlayer) {
-            let html = '<h3>Top 5 Scores</h3>';
-            if (scores.length === 0) {
-                html += '<p>No scores yet.</p>';
-            } else {
-                html += scores.map((entry, i) => `${i + 1}. ${entry.name}: ${entry.score}`).join('<br>');
-            }
-            html += `<br><h4>Your Score: ${currentPlayer}: ${currentScore}</h4>`;
-            highScoresDiv.innerHTML = html;
+        } catch (error) {
+            console.error('Error fetching high scores:', error);
+            highScoresDiv.innerHTML = '<h3>Top 5 Scores</h3><p>Failed to load scores. Check console for details.</p>';
             highScoresDiv.style.display = 'block';
         }
 
-        // Timer function
-        function updateTimer() {
-            if (gameRunning && deathOnWall) {
-                timerDisplay.textContent = `Time: ${timeLeft}s`;
-                if (timeLeft > 0) {
-                    timeLeft--;
-                    setTimeout(updateTimer, 1000);
-                } else {
-                    gameOver();
-                }
+        // Show alert with the message
+        alert(`${message} ${playerName}, Energy Collected: ${score}`);
+
+        // Reset game state and prompt for new name
+        score = 0;
+        orbs = [];
+        player.x = 300;
+        player.y = 200;
+        scoreDisplay.textContent = `Energy: ${score}`;
+        highScoresDiv.style.display = 'none';
+        gameOverAnimation = false;
+        explosionParticles = [];
+        draw();
+        playerName = ''; // Clear player name
+        playerNameInput.value = ''; // Clear input field
+        namePrompt.style.display = 'block'; // Show name prompt again
+    }
+
+    // Save score to Firestore
+    async function saveScore(name, score) {
+        try {
+            await addDoc(collection(db, 'scores'), {
+                name,
+                score,
+                timestamp: new Date().toISOString()
+            });
+        } catch (error) {
+            console.error('Error saving score:', error);
+            throw error; // Re-throw to handle in gameOver
+        }
+    }
+
+    // Fetch top 5 scores from Firestore
+    async function fetchTopScores() {
+        try {
+            const q = query(collection(db, 'scores'), orderBy('score', 'desc'), limit(5));
+            const snapshot = await getDocs(q);
+            return snapshot.docs.map(doc => doc.data());
+        } catch (error) {
+            console.error('Error fetching scores:', error);
+            throw error; // Re-throw to handle in gameOver
+        }
+    }
+
+    // Display high scores and current player's score
+    function displayHighScores(scores, currentScore, currentPlayer) {
+        let html = '<h3>Top 5 Scores</h3>';
+        if (scores.length === 0) {
+            html += '<p>No scores yet.</p>';
+        } else {
+            html += scores.map((entry, i) => `${i + 1}. ${entry.name}: ${entry.score}`).join('<br>');
+        }
+        html += `<br><h4>Your Score: ${currentPlayer}: ${currentScore}</h4>`;
+        highScoresDiv.innerHTML = html;
+        highScoresDiv.style.display = 'block';
+    }
+
+    // Timer function
+    function updateTimer() {
+        if (gameRunning && deathOnWall) {
+            timerDisplay.textContent = `Time: ${timeLeft}s`;
+            if (timeLeft > 0) {
+                timeLeft--;
+                setTimeout(updateTimer, 1000);
+            } else {
+                gameOver();
             }
         }
+    }
 
-        // End game after 30 seconds if not death on wall (already handled by timer)
-        if (!deathOnWall) setTimeout(() => gameOver(), 30000);
-    </script>
-</body>
-</html>
+    // End game after 30 seconds if not death on wall (already handled by timer)
+    if (!deathOnWall) setTimeout(() => gameOver(), 30000);
+</script>
